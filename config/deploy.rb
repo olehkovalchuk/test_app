@@ -1,35 +1,147 @@
 # config valid for current version and patch releases of Capistrano
-lock "~> 3.17.3"
+# lock "~> 3.17.3"
 
-set :application, "test_app"
+# set :application, "test_app"
+# set :repo_url, "git@github.com:olehkovalchuk/test_app.git"
+
+# set :rvm_ruby_version, "ruby-2.6.3"
+# set :default_env, { rvm_bin_path: "~/.rvm/bin" }
+# # set :linked_files, ["config/secrets.yml"]
+# set :linked_files, %w[config/database.yml config/master.key]
+# # set :linked_files, %w[config/application.yml config/database.yml config/master.key]
+
+# append :linked_dirs, %w[log tmp/pids tmp/cache tmp/sockets vendor/bundle .bundle public/system public/uploads node_modules]
+
+# set :keep_releases, 3
+# set :conditionally_migrate, true
+
+# set :format, :pretty
+# set :log_level, :info
+# set :rvm_ruby_version, "ruby-2.6.3@#{fetch(:application)}"
+# SSHKit.config.command_map[:rake]  = "bundle exec rake --trace"
+# SSHKit.config.command_map[:rails] = "bundle exec rails"
+
+# # Default branch is :master
+# # ask :branch, `git rev-parse --abbrev-ref HEAD`.chomp
+
+# # Default deploy_to directory is /var/www/my_app_name
+# set :deploy_to, "/var/www/my_test_app"
+# before 'deploy:starting', 'config_files:upload'
+
+
+# # set this to false after deploying for the first time 
+# set :initial, true
+
+# # run only if app is being deployed for the very first time, should update "set :initial, true" above to run this
+
+# # before 'deploy:migrate', 'database:create' if fetch(:initial)
+
+# after 'deploy:publishing', 'application:reload'
+
+
+# # Change these
+# server '138.201.234.131', user: 'gsuser', port: 2244, roles: [:web, :app, :db], primary: true
+
+
+
+
+# set :deploy_to, "/var/www/#{fetch(:stage)}/#{fetch(:application)}"
+# set :deploy_via, :remote_cache
+# set :branch, ENV['BRANCH'] || proc { `git rev-parse --abbrev-ref HEAD`.chomp }
+# set :keep_releases, 10
+# set :pty, true
+# set :user, 'deploy'
+# set :port, 22
+# set :use_sudo, false
+# set :ssh_options, {
+#   #forward_agent: true,
+#   user: fetch(:user)
+# }
+
+
+
 set :repo_url, "git@github.com:olehkovalchuk/test_app.git"
+set :application, "test_app"
+set :user,            'deploy'
+set :puma_threads,    [4, 16]
+set :puma_workers,    0
+# set :deploy_to, "/var/www/my_test_app"
 
-set :rvm_ruby_version, "ruby-2.6.3"
-set :default_env, { rvm_bin_path: "~/.rvm/bin" }
-# set :linked_files, ["config/secrets.yml"]
-set :linked_files, %w[config/database.yml config/master.key]
-# set :linked_files, %w[config/application.yml config/database.yml config/master.key]
+# Don't change these unless you know what you're doing
+set :pty,             true
+set :use_sudo,        false
+set :stage,           :production
+set :deploy_via,      :remote_cache
+set :deploy_to,       "/home/#{fetch(:user)}/apps/#{fetch(:application)}"
+set :puma_bind,       "unix://#{shared_path}/tmp/sockets/#{fetch(:application)}-puma.sock"
+set :puma_state,      "#{shared_path}/tmp/pids/puma.state"
+set :puma_pid,        "#{shared_path}/tmp/pids/puma.pid"
+set :puma_access_log, "#{release_path}/log/puma.error.log"
+set :puma_error_log,  "#{release_path}/log/puma.access.log"
+set :ssh_options,     { forward_agent: true, user: fetch(:user), keys: %w(~/.ssh/id_rsa.pub) }
+set :puma_preload_app, true
+set :puma_worker_timeout, nil
+set :puma_init_active_record, true  # Change to false when not using ActiveRecord
 
-append :linked_dirs, %w[log tmp/pids tmp/cache tmp/sockets vendor/bundle .bundle public/system public/uploads node_modules]
+## Defaults:
+# set :scm,           :git
+# set :branch,        :master
+# set :format,        :pretty
+# set :log_level,     :debug
+# set :keep_releases, 5
 
-set :keep_releases, 3
-set :conditionally_migrate, true
+## Linked Files & Directories (Default None):
+# set :linked_files, %w{config/database.yml}
+# set :linked_dirs,  %w{bin log tmp/pids tmp/cache tmp/sockets vendor/bundle public/system}
 
-# Default branch is :master
-# ask :branch, `git rev-parse --abbrev-ref HEAD`.chomp
+namespace :puma do
+  desc 'Create Directories for Puma Pids and Socket'
+  task :make_dirs do
+    on roles(:app) do
+      execute "mkdir #{shared_path}/tmp/sockets -p"
+      execute "mkdir #{shared_path}/tmp/pids -p"
+    end
+  end
 
-# Default deploy_to directory is /var/www/my_app_name
-set :deploy_to, "/var/www/my_test_app"
-before 'deploy:starting', 'config_files:upload'
+  before :start, :make_dirs
+end
 
+namespace :deploy do
+  desc "Make sure local git is in sync with remote."
+  task :check_revision do
+    on roles(:app) do
+      unless `git rev-parse HEAD` == `git rev-parse origin/master`
+        puts "WARNING: HEAD is not the same as origin/master"
+        puts "Run `git push` to sync changes."
+        exit
+      end
+    end
+  end
 
-# set this to false after deploying for the first time 
-set :initial, true
+  desc 'Initial Deploy'
+  task :initial do
+    on roles(:app) do
+      before 'deploy:restart', 'puma:start'
+      invoke 'deploy'
+    end
+  end
 
-# run only if app is being deployed for the very first time, should update "set :initial, true" above to run this
-before 'deploy:migrate', 'database:create' if fetch(:initial)
-after 'deploy:publishing', 'application:reload'
+  desc 'Restart application'
+  task :restart do
+    on roles(:app), in: :sequence, wait: 5 do
+      invoke 'puma:restart'
+    end
+  end
 
+  before :starting,     :check_revision
+  after  :finishing,    :compile_assets
+  after  :finishing,    :cleanup
+  after  :finishing,    :restart
+end
+
+# ps aux | grep puma    # Get puma pid
+# kill -s SIGUSR2 pid   # Restart puma
+# kill -s SIGTERM pid   # Stop puma
 # Default value for :format is :airbrussh.
 # set :format, :airbrussh
 
